@@ -143,30 +143,60 @@ export default Canister({
     }),
 
     uploadWorkToBeVerified: update([text, text], text, (assignmentId, workDone)=>{
+        const assignmentOpt = assignmentStorage.get(assignmentId);
+        if('None' in assignmentOpt){
+            throw new Error(`No assignment with Id: ${assignmentId} found`);
+        }
         uploadedWork.insert(assignmentId, workDone);
         return 'Your work is uploaded';
     }),
 
     viewTheWorkDone: query([text], text, (id)=>{
-        try {
-            const progressId: text = workUnderSupervison.get(id).Some;
-            const workStructure: StudentToSupervisorRecord = progressStorage.get(progressId).Some;
-            const workDone: text = uploadedWork.get(workStructure.assignmentId).Some;
-            return workDone;
-        } catch (error) {
-            throw new Error("Failed to view work done");
+        const progressIdOpt = workUnderSupervison.get(id);
+        if('None' in progressIdOpt){
+            throw new Error(`Supervisor with ID: ${id} has no student to monitor`)
         }
+        const progressId: text = progressIdOpt.Some;
+
+        const workStructureOpt = progressStorage.get(progressId);
+        if('None' in workStructureOpt){
+            throw new Error(`Failed to get StudentToSupervisorRecord with ID: ${progressId}`)
+        }
+        const workStructure: StudentToSupervisorRecord = workStructureOpt.Some
+
+        const workDoneOpt = uploadedWork.get(workStructure.assignmentId);
+        if('None' in workDoneOpt){
+            throw new Error(`Failed to load work done for the assignment with ID: ${workStructure.assignmentId}`);
+            
+        }
+        const workDone: text = workDoneOpt.Some;
+        return workDone;
     }),
 
-    veryWorkDone: update([text], Void, (id)=>{
-        const progressId: text = workUnderSupervison.get(id);
-        const workStructure: StudentToSupervisorRecord = progressStorage.get(progressId);
+    verifyWorkDone: update([text], Void, (id)=>{
+        const progressIdOpt = workUnderSupervison.get(id);
+        if('None' in progressIdOpt){
+            throw new Error(`Supervisor with ID: ${id} has no student to monitor`)
+        }
+        const progressId: text = progressIdOpt.Some;
+
+        const workStructureOpt = progressStorage.get(progressId);
+        if('None' in workStructureOpt){
+            throw new Error(`Failed to get StudentToSupervisorRecord with ID: ${progressId}`)
+        }
+        const workStructure: StudentToSupervisorRecord = workStructureOpt.Some
+
         const newWorkStructure: StudentToSupervisorRecord = {
             ...workStructure,
             isFinished: true, 
         }
         const assignmentId: text = newWorkStructure.assignmentId;
-        const timerId: TimerId = timerIdStorage.get(assignmentId);
+
+        const timerIdOpt = timerIdStorage.get(assignmentId);
+        if('None' in timerIdOpt){
+            throw new Error(`Failed to fetch timerId for the assignment with ID: ${assignmentId}`)
+        }
+        const timerId: TimerId = timerIdOpt.Some;
         ic.clearTimer(timerId);
     }),
 

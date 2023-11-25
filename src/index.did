@@ -9,6 +9,6 @@ service: () -> {
     stake: (text, nat) -> (variant {Ok:text; Err:variant {IdDoesNotExistError:text; StakedIsTooLow:nat}});
     uploadAssignment: (text, record {topic:text; dueDate:nat}) -> (variant {Ok:text; Err:variant {IdDoesNotExistError:text; StakedIsTooLow:nat}});
     uploadWorkToBeVerified: (text, text) -> (text);
-    veryWorkDone: (text) -> ();
+    verifyWorkDone: (text) -> ();
     viewTheWorkDone: (text) -> (text) query;
 }
