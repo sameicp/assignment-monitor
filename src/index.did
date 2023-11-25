@@ -1,0 +1,14 @@
+service: () -> {
+    claimFunds: (text, text) -> (text);
+    createStudent: (record {areaOfStudy:text; name:text}) -> (text);
+    createSupervisor: (record {areaOfStudy:text; name:text}) -> (text);
+    getAssignments: () -> (vec record {id:text; isFinished:bool; studentId:text; assignmentId:text; supervisorId:text}) query;
+    getParticipants: () -> (vec record {id:text; areaOfStudy:text; hasStaked:bool; name:text; isSupervisor:bool}) query;
+    getStudentName: (text) -> (variant {Ok:text; Err:variant {IdDoesNotExistError:text; StakedIsTooLow:nat}}) query;
+    getSupervisorList: () -> (vec record {id:text; areaOfStudy:text; hasStaked:bool; name:text; isSupervisor:bool}) query;
+    stake: (text, nat) -> (variant {Ok:text; Err:variant {IdDoesNotExistError:text; StakedIsTooLow:nat}});
+    uploadAssignment: (text, record {topic:text; dueDate:nat}) -> (variant {Ok:text; Err:variant {IdDoesNotExistError:text; StakedIsTooLow:nat}});
+    uploadWorkToBeVerified: (text, text) -> (text);
+    veryWorkDone: (text) -> ();
+    viewTheWorkDone: (text) -> (text) query;
+}
