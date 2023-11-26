@@ -76,8 +76,6 @@ export default Canister({
         }
         
         const participant: Participant = participantOpt.Some;
-        // const prevBalance: nat = participantStakeBalance.get(id).Some
-        // const newBalance: nat = prevBalance + amountToStake;
         participantStakeBalance.insert(id, amountToStake);
         
         const updatedParticipant: Participant = {
@@ -296,4 +294,3 @@ const setDueDate = (period: Duration, student: Participant): TimerId =>{
     });
 }
 
-// "745a7cd8-9293-431e-869c-9e54295772a4: Do not lose this Id. You will use it to claim your funds after finishing assignment. Use this assignentId to upload your work: ebeff4ce-8c58-4092-ba50-179755fd5891"
