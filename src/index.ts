@@ -59,7 +59,92 @@ let timerIdStorage = StableBTreeMap<text, TimerId>(text, TimerId, 8);
 let supervisorList: Participant[] = [];
 
 export default Canister({
-    // student have to stake first before they submit any task on the platform
+
+    /////////////////////
+    // Query functions //
+    /////////////////////
+
+    /**
+     * Queries the canister to get the Students and Supervisors 
+     * @return a list of the participants on the plaform
+     */
+    getParticipants: query([], Vec(Participant), ()=>{
+        return idToParticipantRecord.values()
+    }),
+
+    /**
+     * Queries the a student from the canister using student's id
+     * @param id - the id of the student
+     * @return Result with the name of the student or an error message
+     */
+    getStudentName: query([text], Result(text, ParticipantError), (id)=>{
+        const participantOpt = idToParticipantRecord.get(id);
+        if('None' in participantOpt){
+            return Err({
+                IdDoesNotExistError: id
+            });
+        }
+
+        const participant: Participant = participantOpt.Some
+        if(participant.isSupervisor){
+            throw new Error('Not a Student');
+        }
+        return Ok(`Student Name: ${participant.name}`);
+    }),
+
+    /**
+     * Queries a list of available supervisors on the platform
+     * @return a list of registered supervisors.
+     */
+    getSupervisorList: query([], Vec(Participant), ()=>{
+        return supervisorList;
+    }),
+
+    /**
+     * Queries a list of already matched assignments on the platfrom
+     * @return an objects which includes studentId, supervisorId, assignmentId and isFinished value
+     */
+    getProgress: query([], Vec(StudentToSupervisorRecord), ()=>{
+        return progressStorage.values();
+    }),
+
+    /**
+     * Supervisors uses their ID to view the work done by the student assigned to them
+     * @param id - this is the id of the supervisor
+     * @return - returns a text submited by the student else it results in an error
+     */
+    viewTheWorkDone: query([text], text, (id)=>{
+        const progressIdOpt = workUnderSupervison.get(id);
+        if('None' in progressIdOpt){
+            throw new Error(`Supervisor with ID: ${id} has no student to monitor`)
+        }
+        const progressId: text = progressIdOpt.Some;
+
+        const workStructureOpt = progressStorage.get(progressId);
+        if('None' in workStructureOpt){
+            throw new Error(`Failed to get progress with ID: ${progressId}`)
+        }
+        const workStructure: StudentToSupervisorRecord = workStructureOpt.Some
+
+        const workDoneOpt = uploadedWork.get(workStructure.assignmentId);
+        if('None' in workDoneOpt){
+            throw new Error(`Failed to load work done for the assignment with ID: ${workStructure.assignmentId}`);
+            
+        }
+        const workDone: text = workDoneOpt.Some;
+        return workDone;
+    }),
+
+    //////////////////////
+    // Update functions //
+    //////////////////////
+
+    /**
+     * All participants on the platform need to stack in order to participate on the platform
+     * @param id - Participant who want to stake some tokens
+     * @param amountToStake - Amount of tokens the participants are willing to stake(minimum of 1000)
+     * @return - A Result containing confirmation message or error message
+     */
     stake: update([text, nat], Result(text, ParticipantError), (id, amountToStake)=>{
         const participantOpt = idToParticipantRecord.get(id);
 
@@ -92,6 +177,11 @@ export default Canister({
         return Ok(`${amountToStake} successfully staked by ${id}`);
     }),
 
+    /**
+     * Register a student on the Platform
+     * @param info - Details of the student registering
+     * @return Confirmation that a student is registered successfully
+     */
     createStudent: update([ParticipantInfo], text, (info)=>{
         const student: Participant = {
             id: uuidv4(),
@@ -103,6 +193,11 @@ export default Canister({
         return `Student: ${student.name}, ID: ${student.id}`;
     }),
 
+    /**
+     * Register a supervisor on the Platform
+     * @param info - Details of the supervisor registering
+     * @return Confirmation that a supervisor is registered successfully
+     */
     createSupervisor: update([ParticipantInfo], text, (info)=>{
         const supervisor: Participant = {
             id: uuidv4(),
@@ -114,6 +209,12 @@ export default Canister({
         return `Supervisor: ${supervisor.name}, ID: ${supervisor.id}`;
     }),
 
+    /**
+     * Used by students to Upload their Assignments if they have staked
+     * @param studentId - ID of the student who is uploading the assignment
+     * @param assignmentInfo - Details of the assignment
+     * @return Returns a confirmation message or error message
+     */
     uploadAssignment: update([text, AssignmentInfo],Result(text, ParticipantError) , (studentId, assignmentInfo)=>{
 
         const participantOpt = idToParticipantRecord.get(studentId);
@@ -140,7 +241,13 @@ export default Canister({
         return Ok(`${studentToSupervisorRecordId}: Do not lose this Id. You will use it to claim your funds after finishing assignment. Use this assignentId to upload your work: ${assignment.id}`);
     }),
 
-    uploadWorkToBeVerified: update([text, text], text, (assignmentId, workDone)=>{
+    /**
+     * Students can upload their work so that it can be verified by the Supervisors
+     * @param assignentId - ID for the assignment for which they are uploading the solution
+     * @param workDone - Text of the solution they have came up with for the solution
+     * @return Confirmation message for success or an error message
+     */
+    uploadSolution: update([text, text], text, (assignmentId, workDone)=>{
         const assignmentOpt = assignmentStorage.get(assignmentId);
         if('None' in assignmentOpt){
             throw new Error(`No assignment with Id: ${assignmentId} found`);
@@ -149,28 +256,11 @@ export default Canister({
         return 'Your work is uploaded';
     }),
 
-    viewTheWorkDone: query([text], text, (id)=>{
-        const progressIdOpt = workUnderSupervison.get(id);
-        if('None' in progressIdOpt){
-            throw new Error(`Supervisor with ID: ${id} has no student to monitor`)
-        }
-        const progressId: text = progressIdOpt.Some;
-
-        const workStructureOpt = progressStorage.get(progressId);
-        if('None' in workStructureOpt){
-            throw new Error(`Failed to get StudentToSupervisorRecord with ID: ${progressId}`)
-        }
-        const workStructure: StudentToSupervisorRecord = workStructureOpt.Some
-
-        const workDoneOpt = uploadedWork.get(workStructure.assignmentId);
-        if('None' in workDoneOpt){
-            throw new Error(`Failed to load work done for the assignment with ID: ${workStructure.assignmentId}`);
-            
-        }
-        const workDone: text = workDoneOpt.Some;
-        return workDone;
-    }),
-
+    /**
+     * Supervisors can use this function verify that the student have done work
+     * @param id - ID of the Supervisor
+     * @return Void
+     */
     verifyWorkDone: update([text], Void, (id)=>{
         const progressIdOpt = workUnderSupervison.get(id);
         if('None' in progressIdOpt){
@@ -198,11 +288,17 @@ export default Canister({
         ic.clearTimer(timerId);
     }),
 
+    /**
+     * Used by the Students who have no tasks which is due to take back their tokens
+     * @param studentId - ID of the Student whose claiming the tokens
+     * @param specialId - ID used to retrieve a record of task the student has done
+     * @return Sucess message or thow an error
+     */
     claimFunds: update([text, text], text, (studentId, specialId)=>{
         const progressCheckOpt = progressStorage.get(specialId);
 
         if('None' in progressCheckOpt){
-            throw new Error("No work was in progress");
+            throw new Error("Failed to find the assingment which you have done");
         }
         const progressCheck: StudentToSupervisorRecord = progressCheckOpt.Some;
 
@@ -222,33 +318,6 @@ export default Canister({
 
         return `Successfully withdrew ${amount.toString()} tokens`
     }),
-
-    getParticipants: query([], Vec(Participant), ()=>{
-        return idToParticipantRecord.values()
-    }),
-
-    getStudentName: query([text], Result(text, ParticipantError), (id)=>{
-        const participantOpt = idToParticipantRecord.get(id);
-        if('None' in participantOpt){
-            return Err({
-                IdDoesNotExistError: id
-            });
-        }
-
-        const participant: Participant = participantOpt.Some
-        if(participant.isSupervisor){
-            return Ok('Not a Student');
-        }
-        return Ok(`Student Name: ${participant.name}`);
-    }),
-
-    getSupervisorList: query([], Vec(Participant), ()=>{
-        return supervisorList;
-    }),
-
-    getAssignments: query([], Vec(StudentToSupervisorRecord), ()=>{
-        return progressStorage.values();
-    }),
 });
 
 // a workaround to make uuid package work with Azle
@@ -263,6 +332,12 @@ globalThis.crypto = {
    }
   }
 
+/**
+ * 
+ * @param student Student with the assignment 
+ * @param assignment The tasks which the student has to do
+ * @returns returns an ID which connect the student with the supervisor
+ */
 function linkStudentToSuperVisor(student:Participant, assignment: Assignment): text {
     try {
     const supervisorIndex = randomInt(supervisorList.length-1, 0);
@@ -280,14 +355,26 @@ function linkStudentToSuperVisor(student:Participant, assignment: Assignment): t
     return studentToSupervisor.id;
 
     } catch (error) {
-        throw new Error("failed to execute the code");
+        throw new Error("failed to eStudents havent xecute the code");
         
     }
 }
 
+/**
+ * generate a random number
+ * @param max maximun number to reach when selecting a random number
+ * @param min minimun number to start to randomly select from
+ * @returns returns a number between min and max
+ */
 const randomInt = (max: number, min: number): number =>
   Math.floor(Math.random() * (max - min) + 1) + min;
 
+/**
+ * 
+ * @param period duration of the assignment in days
+ * @param student object of student 
+ * @returns TimerId which can be used to stop the timer when the student finishes task
+ */
 const setDueDate = (period: Duration, student: Participant): TimerId =>{
     return ic.setTimer(period, ()=>{
         participantStakeBalance.insert(student.id, 0n);
