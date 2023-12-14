@@ -1,38 +1,14 @@
-type AssignmentInfo = record { topic : text; dueDate : nat };
-type Participant = record {
-  id : text;
-  areaOfStudy : text;
-  hasStaked : bool;
-  name : text;
-  isSupervisor : bool;
-};
-type ParticipantError = variant {
-  IdDoesNotExistError : text;
-  StakedIsTooLow : nat;
-};
-type ParticipantInfo = record { areaOfStudy : text; name : text };
-type StudentToSupervisorRecord = record {
-  id : text;
-  isFinished : bool;
-  studentId : text;
-  assignmentId : text;
-  supervisorId : text;
-};
-type _AzleResult = variant { Ok : text; Err : text };
-type _AzleResult_1 = variant { Ok : text; Err : ParticipantError };
-type _AzleResult_2 = variant { Ok : vec Participant; Err : text };
-type _AzleResult_3 = variant { Ok : vec StudentToSupervisorRecord; Err : text };
-service : () -> {
-  claimFunds : (text, text) -> (_AzleResult);
-  createStudent : (ParticipantInfo) -> (_AzleResult_1);
-  createSupervisor : (ParticipantInfo) -> (_AzleResult_1);
-  getParticipants : () -> (_AzleResult_2) query;
-  getProgress : () -> (_AzleResult_3) query;
-  getStudentName : (text) -> (_AzleResult_1) query;
-  getSupervisorList : () -> (_AzleResult_2) query;
-  stake : (text, nat) -> (_AzleResult_1);
-  uploadAssignment : (text, AssignmentInfo) -> (_AzleResult_1);
-  uploadSolution : (text, text) -> (_AzleResult);
-  verifyWorkDone : (text) -> (_AzleResult);
-  viewTheWorkDone : (text) -> (_AzleResult) query;
+service: () -> {
+    claimFunds: (text, text) -> (text);
+    createStudent: (record {areaOfStudy:text; name:text}) -> (text);
+    createSupervisor: (record {areaOfStudy:text; name:text}) -> (text);
+    getParticipants: () -> (vec record {id:text; areaOfStudy:text; hasStaked:bool; name:text; isSupervisor:bool}) query;
+    getProgress: () -> (vec record {id:text; isFinished:bool; studentId:text; assignmentId:text; supervisorId:text}) query;
+    getStudentName: (text) -> (variant {Ok:text; Err:variant {IdDoesNotExistError:text; StakedIsTooLow:nat}}) query;
+    getSupervisorList: () -> (vec record {id:text; areaOfStudy:text; hasStaked:bool; name:text; isSupervisor:bool}) query;
+    stake: (text, nat) -> (variant {Ok:text; Err:variant {IdDoesNotExistError:text; StakedIsTooLow:nat}});
+    uploadAssignment: (text, record {topic:text; dueDate:nat}) -> (variant {Ok:text; Err:variant {IdDoesNotExistError:text; StakedIsTooLow:nat}});
+    uploadSolution: (text, text) -> (text);
+    verifyWorkDone: (text) -> ();
+    viewTheWorkDone: (text) -> (text) query;
 }

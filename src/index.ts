@@ -1,455 +1,383 @@
-import {
-  ic,
-  nat,
-  $query,
-  StableBTreeMap,
-  $update,
-  TimerId,
-  Record,
-  Variant,
-  Result,
-  Vec,
-  Opt,
-  match,
-  Duration,
-} from 'azle';
-import { v4 as uuidv4 } from 'uuid';
+import { Canister, ic, nat, Duration, query, StableBTreeMap, text, update, TimerId, Record, Variant, Result, Err, Ok, Vec, bool, int, Opt, Void } from 'azle';
+import {v4 as uuidv4} from 'uuid';
 
-type Participant = Record<{
-  id: string;
-  name: string;
-  areaOfStudy: string;
-  isSupervisor: boolean;
-  hasStaked: boolean;
-}>;
+const minStakeAmount = 1000;
 
-type ParticipantInfo = Record<{
-  name: string;
-  areaOfStudy: string;
-}>;
+const Participant = Record({
+    id: text,
+    name: text,
+    areaOfStudy: text,
+    isSupervisor: bool,
+    hasStaked: bool,
+  });
 
-type Assignment = Record<{
-  id: string;
-  topic: string;
-  dueDate: nat;
-}>;
+const ParticipantInfo = Record({
+    name: text,
+    areaOfStudy: text,
+})
 
-type AssignmentInfo = Record<{
-  topic: string;
-  dueDate: nat;
-}>;
+const Assignment = Record({
+    id: text,
+    topic: text,
+    dueDate: nat,
+})
 
-type StudentToSupervisorRecord = Record<{
-  id: string;
-  studentId: string;
-  supervisorId: string;
-  assignmentId: string;
-  isFinished: boolean;
-}>;
+const AssignmentInfo = Record({
+    topic: text,
+    dueDate: nat,
+})
 
-type ParticipantError = Variant<{
-  IdDoesNotExistError: string;
-  StakedIsTooLow: nat;
-}>;
+const StudentToSupervisorRecord = Record({
+    id: text,
+    studentId: text,
+    supervisorId: text,
+    assignmentId: text,
+    isFinished: bool,
+})
 
-const participantStakeBalance = new StableBTreeMap<string, nat>(0, 44, 1024);
-const idToParticipantRecord = new StableBTreeMap<string, Participant>(1, 44, 1024);
-const assignmentStorage = new StableBTreeMap<string, Assignment>(2, 44, 1024);
-const progressStorage = new StableBTreeMap<string, StudentToSupervisorRecord>(3, 44, 1024);
-const workUnderSupervison = new StableBTreeMap<string, string>(4, 44, 1024);
-const uploadedWork = new StableBTreeMap<string, string>(5, 44, 1024);
-const timerIdStorage = new StableBTreeMap<string, TimerId>(6, 44, 1024);
+type Participant = typeof Participant;
+type ParticipantInfo = typeof ParticipantInfo;
+type Assignment = typeof Assignment;
+type AssignmentInfo = typeof AssignmentInfo;
+type StudentToSupervisorRecord = typeof StudentToSupervisorRecord;
+
+
+
+const ParticipantError = Variant({
+    IdDoesNotExistError: text,
+    StakedIsTooLow: nat
+  });
+
+let participantStakeBalance = StableBTreeMap<text, nat>(text, nat, 0);
+let idToParticipantRecord = StableBTreeMap<text, Participant>(text, Participant, 5);
+let assignmentStorage = StableBTreeMap<text, Assignment>(text, Assignment, 2);
+let progressStorage = StableBTreeMap<text, StudentToSupervisorRecord>(text, StudentToSupervisorRecord, 3);
+let workUnderSupervison = StableBTreeMap<text, text>(text, text, 7);
+let uploadedWork = StableBTreeMap<text, text>(text, text, 6);
+let timerIdStorage = StableBTreeMap<text, TimerId>(text, TimerId, 8);
 
 let supervisorList: Participant[] = [];
 
-$query
-export function getParticipants(): Result<Vec<Participant>, string> {
-  try {
-    return Result.Ok(idToParticipantRecord.values());
-  } catch (error) {
-    return Result.Err('Failed to get participants');
-  }
-}
+export default Canister({
 
-$query
-export function getStudentName(id: string): Result<string, ParticipantError> {
+    /////////////////////
+    // Query functions //
+    /////////////////////
 
-  // Validate ID
-  if (!id) {
-    return Result.Err({
-      IdDoesNotExistError: 'Missing ID or Invalid ID',
-    });
-  }
-
-  return match(idToParticipantRecord.get(id), {
-    Some: (participant: Participant) => {
-      if (participant.isSupervisor) {
-        return Result.Err<string, ParticipantError>({
-          IdDoesNotExistError: id,
-        });
-      }
-      return Result.Ok<string, ParticipantError>(`Student Name: ${participant.name}`);
-    },
-    None: () =>
-      Result.Err<string, ParticipantError>({
-        IdDoesNotExistError: id,
-      }),
-  });
-}
-
-$query
-export function getSupervisorList(): Result<Vec<Participant>, string> {
-  try {
-    return Result.Ok(supervisorList);
-  } catch (error) {
-    return Result.Err('Failed to get supervisor list');
-  }
-}
-
-$query
-export function getProgress(): Result<Vec<StudentToSupervisorRecord>, string> {
-  try {
-    return Result.Ok(progressStorage.values());
-  } catch (error) {
-    return Result.Err('Failed to get progress records');
-  }
-}
-
-$query
-export function viewTheWorkDone(id: string): Result<string, string> {
-  // Validate ID
-  if (!id) {
-    return Result.Err<string, string>("Missing ID or Invalid ID");
-  }
-  const progressIdOpt = workUnderSupervison.get(id);
-
-  return match(progressIdOpt, {
-    None: () => Result.Err<string, string>(`Supervisor with ID: ${id} has no student to monitor`),
-    Some: (progressId) => {
-      const workStructureOpt = progressStorage.get(progressId);
-
-      return match(workStructureOpt, {
-        None: () => Result.Err<string, string>(`Failed to get progress with ID: ${progressId}`),
-        Some: (workStructure) => {
-          const workDoneOpt = uploadedWork.get(workStructure.assignmentId);
-
-          return match(workDoneOpt, {
-            None: () => Result.Err<string, string>(`Failed to load work done for the assignment with ID: ${workStructure.assignmentId}`),
-            Some: (workDone) => Result.Ok<string, string>(workDone),
-          });
-        },
-      });
-    },
-  });
-}
-
-$update
-export function stake(id: string, amountToStake: nat): Result<string, ParticipantError> {
-  // Validate ID
-  if (!id) {
-    return Result.Err({
-      IdDoesNotExistError: 'Missing ID or Invalid ID',
-    });
-  }
-
-  // Validate Amount
-  if (amountToStake < 0) {
-    return Result.Err({
-      IdDoesNotExistError: 'Amount always greater than zero',
-    });
-  }
-
-
-  const participantOpt = idToParticipantRecord.get(id);
-
-  return match(participantOpt, {
-    None: () => Result.Err<string, ParticipantError>({
-      IdDoesNotExistError: id,
+    /**
+     * Queries the canister to get the Students and Supervisors 
+     * @return a list of the participants on the plaform
+     */
+    getParticipants: query([], Vec(Participant), ()=>{
+        return idToParticipantRecord.values()
     }),
-    Some: (participant) => {
-      if (amountToStake < 0) {
-        return Result.Err<string, ParticipantError>({
-          StakedIsTooLow: amountToStake,
-        });
-      }
 
-      participantStakeBalance.insert(id, amountToStake);
+    /**
+     * Queries the a student from the canister using student's id
+     * @param id - the id of the student
+     * @return Result with the name of the student or an error message
+     */
+    getStudentName: query([text], Result(text, ParticipantError), (id)=>{
+        const participantOpt = idToParticipantRecord.get(id);
+        if('None' in participantOpt){
+            return Err({
+                IdDoesNotExistError: id
+            });
+        }
 
-      const updatedParticipant: Participant = {
-        ...participant,
-        hasStaked: true,
-      };
+        const participant: Participant = participantOpt.Some
+        if(participant.isSupervisor){
+            throw new Error('Not a Student');
+        }
+        return Ok(`Student Name: ${participant.name}`);
+    }),
 
-      idToParticipantRecord.insert(updatedParticipant.id, updatedParticipant);
+    /**
+     * Queries a list of available supervisors on the platform
+     * @return a list of registered supervisors.
+     */
+    getSupervisorList: query([], Vec(Participant), ()=>{
+        return supervisorList;
+    }),
 
-      if (updatedParticipant.isSupervisor) {
-        supervisorList.push(updatedParticipant);
-      }
+    /**
+     * Queries a list of already matched assignments on the platfrom
+     * @return an objects which includes studentId, supervisorId, assignmentId and isFinished value
+     */
+    getProgress: query([], Vec(StudentToSupervisorRecord), ()=>{
+        return progressStorage.values();
+    }),
 
-      return Result.Ok<string, ParticipantError>(`${amountToStake} successfully staked by ${id}`);
-    },
-  });
-}
+    /**
+     * Supervisors uses their ID to view the work done by the student assigned to them
+     * @param id - this is the id of the supervisor
+     * @return - returns a text submited by the student else it results in an error
+     */
+    viewTheWorkDone: query([text], text, (id)=>{
+        const progressIdOpt = workUnderSupervison.get(id);
+        if('None' in progressIdOpt){
+            throw new Error(`Supervisor with ID: ${id} has no student to monitor`)
+        }
+        const progressId: text = progressIdOpt.Some;
 
-$update
-export function createStudent(info: ParticipantInfo): Result<string, ParticipantError> {
-  try {
-    // Payload Validation
-    if (!info.name || !info.areaOfStudy) {
-      return Result.Err({
-        IdDoesNotExistError: 'Missing required fields in payload',
-      });
-    }
+        const workStructureOpt = progressStorage.get(progressId);
+        if('None' in workStructureOpt){
+            throw new Error(`Failed to get progress with ID: ${progressId}`)
+        }
+        const workStructure: StudentToSupervisorRecord = workStructureOpt.Some
 
-    const student: Participant = {
-      id: uuidv4(),
-      isSupervisor: false,
-      hasStaked: false,
-      ...info,
-    };
-    idToParticipantRecord.insert(student.id, student);
-    return Result.Ok(`Student: ${student.name}, ID: ${student.id}`);
-  } catch (error) {
-    return Result.Err({
-      IdDoesNotExistError: 'An error occurred while creating the student',
-    });
-  }
-}
+        const workDoneOpt = uploadedWork.get(workStructure.assignmentId);
+        if('None' in workDoneOpt){
+            throw new Error(`Failed to load work done for the assignment with ID: ${workStructure.assignmentId}`);
+            
+        }
+        const workDone: text = workDoneOpt.Some;
+        return workDone;
+    }),
 
-$update
-export function createSupervisor(info: ParticipantInfo): Result<string, ParticipantError> {
-  try {
-    // Payload Validation
-    if (!info.name || !info.areaOfStudy) {
-      return Result.Err({
-        IdDoesNotExistError: 'Missing required fields in payload',
-      });
-    }
+    //////////////////////
+    // Update functions //
+    //////////////////////
 
-    const supervisor: Participant = {
-      id: uuidv4(),
-      hasStaked: false,
-      isSupervisor: true,
-      ...info,
-    };
-    idToParticipantRecord.insert(supervisor.id, supervisor);
-    return Result.Ok(`Supervisor: ${supervisor.name}, ID: ${supervisor.id}`);
-  } catch (error) {
-    return Result.Err({
-      IdDoesNotExistError: 'An error occurred while creating the supervisor',
-    });
-  }
-}
+    /**
+     * All participants on the platform need to stack in order to participate on the platform
+     * @param id - Participant who want to stake some tokens
+     * @param amountToStake - Amount of tokens the participants are willing to stake(minimum of 1000)
+     * @return - A Result containing confirmation message or error message
+     */
+    stake: update([text, nat], Result(text, ParticipantError), (id, amountToStake)=>{
+        const participantOpt = idToParticipantRecord.get(id);
 
-$update
-export function uploadSolution(assignmentId: string, workDone: string): Result<string, string> {
-  // Validate ID
-  if (!assignmentId) {
-    return Result.Err<string, string>("Missing ID or Invalid ID");
-  }
-  if (!workDone) {
-    return Result.Err<string, string>("Missing workDone parameter");
-  }
+        if('None' in participantOpt){
+            return Err({
+                IdDoesNotExistError: id
+            });
+        }
 
-  const result: Result<string, string> = match(assignmentStorage.get(assignmentId), {
-    Some: (assignment) => {
-      uploadedWork.insert(assignmentId, workDone);
-      return Result.Ok<string, string>('Your work is uploaded');
-    },
-    None: () => Result.Err<string, string>(`No assignment with Id: ${assignmentId} found`),
-  });
-
-  return result;
-}
-
-$update
-export function verifyWorkDone(id: string): Result<string, string> {
-  // Validate ID
-  if (!id) {
-    return Result.Err<string, string>("Missing ID or Invalid ID");
-  }
-
-  const result = match(workUnderSupervison.get(id), {
-    Some: (progressId: string) => {
-      const workStructureOpt = progressStorage.get(progressId);
-      return match(workStructureOpt, {
-        Some: (workStructure: StudentToSupervisorRecord) => {
-          const newWorkStructure: StudentToSupervisorRecord = {
-            ...workStructure,
-            isFinished: true,
-          };
-          progressStorage.insert(progressId, newWorkStructure);
-
-          const assignmentId: string = newWorkStructure.assignmentId;
-          const timerIdOpt = timerIdStorage.get(assignmentId);
-
-          return match(timerIdOpt, {
-            Some: (timerId: TimerId) => {
-              ic.clearTimer(timerId);
-              return Result.Ok<string, string>('Work verification successful');
-            },
-            None: () => Result.Err<string, string>('Failed to fetch timerId for the assignment'),
-          });
-        },
-        None: () => Result.Err<string, string>(`Failed to get StudentToSupervisorRecord with ID: ${progressId}`),
-      });
-    },
-    None: () => Result.Err<string, string>(`Supervisor with ID: ${id} has no student to monitor`),
-  });
-
-  return result;
-}
-
-$update
-export function claimFunds(studentId: string, specialId: string): Result<string, string> {
-
-  // Validate ID
-  if (!studentId) {
-    return Result.Err<string, string>("Missing ID or Invalid ID");
-  }
-  if (!specialId) {
-    return Result.Err<string, string>("Missing ID or Invalid ID");
-  }
-
-  const result = match(progressStorage.get(specialId), {
-
-    Some: (progressCheck) => {
-      if (studentId !== progressCheck.studentId || !progressCheck.isFinished) {
-        return Result.Err<string, string>("You are not supposed to claim the funds");
-      }
-
-      const amountOpt: Opt<bigint> = participantStakeBalance.get(progressCheck.studentId);
-      const amount: bigint = match(amountOpt, {
-        Some: (value) => value,
-        None: () => 0n, // Default value if amount is not present
-      });
-
-      participantStakeBalance.insert(progressCheck.studentId, 0n);
-
-      const participantOpt = idToParticipantRecord.get(progressCheck.studentId);
-      return match(participantOpt, {
-        Some: (participant) => {
-          const updatedParticipant: Participant = {
+        if(amountToStake < minStakeAmount){
+            return Err({
+                StakedIsTooLow: amountToStake
+            })
+        }
+        
+        const participant: Participant = participantOpt.Some;
+        participantStakeBalance.insert(id, amountToStake);
+        
+        const updatedParticipant: Participant = {
             ...participant,
-            hasStaked: false,
+            hasStaked: true
           };
-          idToParticipantRecord.insert(updatedParticipant.id, updatedParticipant);
-          return Result.Ok<string, string>(`Successfully withdrew ${amount.toString()} tokens`);
-        },
-        None: () => Result.Err<string, string>("Failed to find the participant"),
-      });
-    },
-    None: () => Result.Err<string, string>("Failed to find the assignment which you have done"),
-  });
 
-  return result;
-}
+        idToParticipantRecord.insert(updatedParticipant.id, updatedParticipant)
 
-$update
-export function uploadAssignment(studentId: string, assignmentInfo: AssignmentInfo): Result<string, ParticipantError> {
-  // Validate ID
-  if (!studentId) {
-    return Result.Err({
-      IdDoesNotExistError: 'Missing ID or Invalid ID',
-    });
-  }
+        if(updatedParticipant.isSupervisor){
+            supervisorList.push(updatedParticipant);
+        }
 
-  // Payload Validation
-  if (!assignmentInfo.topic || !assignmentInfo.dueDate) {
-    return Result.Err({
-      IdDoesNotExistError: 'Missing required fields in payload',
-    });
-  }
-
-  const result: Result<string, ParticipantError> = match(idToParticipantRecord.get(studentId), {
-    Some: (student: Participant) => {
-      if (!student.hasStaked) {
-        return Result.Err<string, ParticipantError>({
-          StakedIsTooLow: BigInt(0),
-        });
-      }
-
-      const assignment: Assignment = {
-        id: uuidv4(),
-        ...assignmentInfo,
-      };
-
-      const studentToSupervisorRecordId: string = linkStudentToSuperVisor(student, assignment);
-      assignmentStorage.insert(assignment.id, assignment);
-      const calcPeriod = BigInt(assignment.dueDate) * 24n * 60n * 60n;
-      const dueDateId: TimerId = setDueDate(calcPeriod, student);
-      timerIdStorage.insert(assignment.id, dueDateId);
-
-      return Result.Ok<string, ParticipantError>(`${studentToSupervisorRecordId}: Do not lose this Id. You will use it to claim your funds after finishing the assignment. Use this assignmentId to upload your work: ${assignment.id}`);
-    },
-    None: () => Result.Err<string, ParticipantError>({
-      IdDoesNotExistError: studentId,
+        return Ok(`${amountToStake} successfully staked by ${id}`);
     }),
-  });
 
-  return result;
-}
+    /**
+     * Register a student on the Platform
+     * @param info - Details of the student registering
+     * @return Confirmation that a student is registered successfully
+     */
+    createStudent: update([ParticipantInfo], text, (info)=>{
+        const student: Participant = {
+            id: uuidv4(),
+            isSupervisor: false,
+            hasStaked: false,
+            ...info
+          };
+          idToParticipantRecord.insert(student.id, student);
+        return `Student: ${student.name}, ID: ${student.id}`;
+    }),
+
+    /**
+     * Register a supervisor on the Platform
+     * @param info - Details of the supervisor registering
+     * @return Confirmation that a supervisor is registered successfully
+     */
+    createSupervisor: update([ParticipantInfo], text, (info)=>{
+        const supervisor: Participant = {
+            id: uuidv4(),
+            hasStaked: false,
+            isSupervisor: true,
+            ...info
+        }
+        idToParticipantRecord.insert(supervisor.id, supervisor);
+        return `Supervisor: ${supervisor.name}, ID: ${supervisor.id}`;
+    }),
+
+    /**
+     * Used by students to Upload their Assignments if they have staked
+     * @param studentId - ID of the student who is uploading the assignment
+     * @param assignmentInfo - Details of the assignment
+     * @return Returns a confirmation message or error message
+     */
+    uploadAssignment: update([text, AssignmentInfo],Result(text, ParticipantError) , (studentId, assignmentInfo)=>{
+
+        const participantOpt = idToParticipantRecord.get(studentId);
+        if('None' in participantOpt){
+            return Err({
+                IdDoesNotExistError: studentId
+            });
+        }
+        const student: Participant = participantOpt.Some;
+        if(!student.hasStaked){
+            throw new Error("You need to Stack some tokens first!");
+        }
+
+        const assignment: Assignment = {
+            id: uuidv4(),
+            ...assignmentInfo
+        }
+        
+        const studentToSupervisorRecordId: text = linkStudentToSuperVisor(student, assignment);
+        assignmentStorage.insert(assignment.id, assignment);
+        const calcPeriod = assignment.dueDate * 24n * 60n * 60n;
+        const dueDateId: TimerId = setDueDate(calcPeriod, student);
+        timerIdStorage.insert(assignment.id, dueDateId);
+        return Ok(`${studentToSupervisorRecordId}: Do not lose this Id. You will use it to claim your funds after finishing assignment. Use this assignentId to upload your work: ${assignment.id}`);
+    }),
+
+    /**
+     * Students can upload their work so that it can be verified by the Supervisors
+     * @param assignentId - ID for the assignment for which they are uploading the solution
+     * @param workDone - Text of the solution they have came up with for the solution
+     * @return Confirmation message for success or an error message
+     */
+    uploadSolution: update([text, text], text, (assignmentId, workDone)=>{
+        const assignmentOpt = assignmentStorage.get(assignmentId);
+        if('None' in assignmentOpt){
+            throw new Error(`No assignment with Id: ${assignmentId} found`);
+        }
+        uploadedWork.insert(assignmentId, workDone);
+        return 'Your work is uploaded';
+    }),
+
+    /**
+     * Supervisors can use this function verify that the student have done work
+     * @param id - ID of the Supervisor
+     * @return Void
+     */
+    verifyWorkDone: update([text], Void, (id)=>{
+        const progressIdOpt = workUnderSupervison.get(id);
+        if('None' in progressIdOpt){
+            throw new Error(`Supervisor with ID: ${id} has no student to monitor`)
+        }
+        const progressId: text = progressIdOpt.Some;
+
+        const workStructureOpt = progressStorage.get(progressId);
+        if('None' in workStructureOpt){
+            throw new Error(`Failed to get StudentToSupervisorRecord with ID: ${progressId}`)
+        }
+        const workStructure: StudentToSupervisorRecord = workStructureOpt.Some
+
+        const newWorkStructure: StudentToSupervisorRecord = {
+            ...workStructure,
+            isFinished: true, 
+        }
+        const assignmentId: text = newWorkStructure.assignmentId;
+
+        const timerIdOpt = timerIdStorage.get(assignmentId);
+        if('None' in timerIdOpt){
+            throw new Error(`Failed to fetch timerId for the assignment with ID: ${assignmentId}`)
+        }
+        const timerId: TimerId = timerIdOpt.Some;
+        ic.clearTimer(timerId);
+    }),
+
+    /**
+     * Used by the Students who have no tasks which is due to take back their tokens
+     * @param studentId - ID of the Student whose claiming the tokens
+     * @param specialId - ID used to retrieve a record of task the student has done
+     * @return Sucess message or thow an error
+     */
+    claimFunds: update([text, text], text, (studentId, specialId)=>{
+        const progressCheckOpt = progressStorage.get(specialId);
+
+        if('None' in progressCheckOpt){
+            throw new Error("Failed to find the assingment which you have done");
+        }
+        const progressCheck: StudentToSupervisorRecord = progressCheckOpt.Some;
+
+        if(studentId !== progressCheck.studentId && !progressCheck.isFinished){
+            throw new Error("You are not supposed to claim the funds");
+        }
+
+        const amount: nat = participantStakeBalance.get(progressCheck.studentId)
+        participantStakeBalance.insert(progressCheck.studentId, 0n);
+        const participantOpt = idToParticipantRecord.get(progressCheck.studentId);
+        const participant: Participant = participantOpt.Some;
+        const updatedParticipant: Participant = {
+            ...participant,
+            hasStaked: false
+          };
+        idToParticipantRecord.insert(updatedParticipant.id, updatedParticipant);
+
+        return `Successfully withdrew ${amount.toString()} tokens`
+    }),
+});
+
+// a workaround to make uuid package work with Azle
+globalThis.crypto = {
+    // @ts-ignore
+   getRandomValues: () => {
+       let array = new Uint8Array(32)
+       for (let i = 0; i < array.length; i++) {
+           array[i] = Math.floor(Math.random() * 256)
+       }
+       return array
+   }
+  }
 
 /**
- * @param student Student with the assignment
+ * 
+ * @param student Student with the assignment 
  * @param assignment The tasks which the student has to do
  * @returns returns an ID which connect the student with the supervisor
  */
-function linkStudentToSuperVisor(student: Participant, assignment: Assignment): string {
-  try {
-    const supervisorIndex = randomInt(supervisorList.length - 1, 0);
+function linkStudentToSuperVisor(student:Participant, assignment: Assignment): text {
+    try {
+    const supervisorIndex = randomInt(supervisorList.length-1, 0);
     const supervisor: Participant = supervisorList[supervisorIndex];
 
     const studentToSupervisor: StudentToSupervisorRecord = {
-      id: uuidv4(),
-      studentId: student.id,
-      supervisorId: supervisor.id,
-      assignmentId: assignment.id,
-      isFinished: false,
-    };
-
-    console.log('About to insert into progressStorage:', studentToSupervisor);
-
+        id: uuidv4(),
+        studentId: student.id,
+        supervisorId: supervisor.id,
+        assignmentId: assignment.id,
+        isFinished: false,
+    }
     progressStorage.insert(studentToSupervisor.id, studentToSupervisor);
-    workUnderSupervison.insert(supervisor.id, studentToSupervisor.id);
-
-    console.log('Inserted into progressStorage successfully.');
-
+    workUnderSupervison.insert(supervisor.id, studentToSupervisor.id)
     return studentToSupervisor.id;
-  } catch (error) {
-    console.error('Error in linkStudentToSuperVisor:', error);
-    throw new Error('Failed to execute the code');
-  }
+
+    } catch (error) {
+        throw new Error("failed to eStudents havent xecute the code");
+        
+    }
 }
 
 /**
  * generate a random number
- * @param max maximum number to reach when selecting a random number
- * @param min minimum number to start to randomly select from
+ * @param max maximun number to reach when selecting a random number
+ * @param min minimun number to start to randomly select from
  * @returns returns a number between min and max
  */
 const randomInt = (max: number, min: number): number =>
   Math.floor(Math.random() * (max - min) + 1) + min;
 
 /**
+ * 
  * @param period duration of the assignment in days
- * @param student object of student
+ * @param student object of student 
  * @returns TimerId which can be used to stop the timer when the student finishes task
  */
-const setDueDate = (period: Duration, student: Participant): TimerId => {
-  return ic.setTimer(period, () => {
-    participantStakeBalance.insert(student.id, 0n);
-  });
-};
+const setDueDate = (period: Duration, student: Participant): TimerId =>{
+    return ic.setTimer(period, ()=>{
+        participantStakeBalance.insert(student.id, 0n);
+    });
+}
 
-// a workaround to make uuid package work with Azle
-globalThis.crypto = {
-  // @ts-ignore
-  getRandomValues: () => {
-    let array = new Uint8Array(32);
-    for (let i = 0; i < array.length; i++) {
-      array[i] = Math.floor(Math.random() * 256);
-    }
-    return array;
-  },
-};
